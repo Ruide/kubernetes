@@ -21,19 +21,24 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"time"
 
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/apis/apiserver"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/authenticatorfactory"
-	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/authorization/authorizerfactory"
+	"k8s.io/apiserver/pkg/authorization/cel"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	genericoptions "k8s.io/apiserver/pkg/server/options"
+	"k8s.io/apiserver/plugin/pkg/authorizer/webhook"
+	webhookmetrics "k8s.io/apiserver/plugin/pkg/authorizer/webhook/metrics"
 	clientset "k8s.io/client-go/kubernetes"
 	authenticationclient "k8s.io/client-go/kubernetes/typed/authentication/v1"
 	authorizationclient "k8s.io/client-go/kubernetes/typed/authorization/v1"
-
+	"k8s.io/client-go/rest"
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/server"
 )
@@ -152,23 +157,48 @@ func NewlocalAuthorizer() *localAuthorizer {
 // It is useful in confidential worker node where API server is not trusted.
 type localAuthorizer struct{}
 
-func (localAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorized authorizer.Decision, reason string, err error) {
-	return authorizer.DecisionAllow, "", nil
+type kubeletWebhookMetrics struct {
+	// kube-apiserver doesn't report request metrics
+	webhookmetrics.NoopRequestMetrics
+	// kube-apiserver does report webhook metrics
+	webhookmetrics.WebhookMetrics
+	// kube-apiserver does report matchCondition metrics
+	cel.MatcherMetrics
 }
 
-func (localAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
-	return []authorizer.ResourceRuleInfo{
-			&authorizer.DefaultResourceRuleInfo{
-				Verbs:     []string{"*"},
-				APIGroups: []string{"*"},
-				Resources: []string{"*"},
-			},
-		}, []authorizer.NonResourceRuleInfo{
-			&authorizer.DefaultNonResourceRuleInfo{
-				Verbs:           []string{"*"},
-				NonResourceURLs: []string{"*"},
-			},
-		}, false, nil
+func (localAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorized authorizer.Decision, reason string, err error) {
+	// Create a REST client instance to Open Policy Agent server.
+	clientConfig := rest.Config{
+		Host:    "http://localhost:8181",
+		APIPath: "v1/data",
+	}
+
+	var decisionOnError authorizer.Decision
+	// Create a Backoff instance with example values
+	backoffConfig := wait.Backoff{
+		Duration: 100 * time.Millisecond, // Initial delay of 100 milliseconds
+		Factor:   2.0,                    // Double the delay on each retry
+		Jitter:   0.2,                    // Add up to 20% random jitter
+		Steps:    5,                      // Allow up to 5 retries
+		Cap:      5 * time.Second,        // Maximum delay of 5 seconds
+	}
+
+	var emptyMatchConditions []apiserver.WebhookMatchCondition
+
+	webhookAuthorizer, err := webhook.New(&clientConfig,
+		"v1beta1",
+		5*time.Minute,
+		5*time.Minute,
+		backoffConfig,
+		decisionOnError,
+		emptyMatchConditions,
+		"Local OPA webhook",
+		kubeletWebhookMetrics{WebhookMetrics: webhookmetrics.NewWebhookMetrics(), MatcherMetrics: cel.NewMatcherMetrics()},
+	)
+	if err != nil {
+		return 0, "Failed to create local webhook authorizer: %v", err
+	}
+	return webhookAuthorizer.Authorize(ctx, a)
 }
 
 func NewAlwaysAllowAuthorizer() *localAuthorizer {
