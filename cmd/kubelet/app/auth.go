@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authentication/authenticatorfactory"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/authorization/authorizerfactory"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
@@ -130,6 +131,9 @@ func BuildAuthz(client authorizationclient.AuthorizationV1Interface, authz kubel
 		}
 		return authorizerConfig.New()
 
+	case kubeletconfig.KubeletAuthorizationModeLocal:
+		return NewlocalAuthorizer(), nil
+
 	case "":
 		return nil, fmt.Errorf("no authorization mode specified")
 
@@ -137,4 +141,36 @@ func BuildAuthz(client authorizationclient.AuthorizationV1Interface, authz kubel
 		return nil, fmt.Errorf("unknown authorization mode %s", authz.Mode)
 
 	}
+}
+
+func NewlocalAuthorizer() *localAuthorizer {
+	return new(localAuthorizer)
+}
+
+// localAuthorizer is an implementation of authorizer.Attributes
+// which check local webhook to an authorization request.
+// It is useful in confidential worker node where API server is not trusted.
+type localAuthorizer struct{}
+
+func (localAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorized authorizer.Decision, reason string, err error) {
+	return authorizer.DecisionAllow, "", nil
+}
+
+func (localAuthorizer) RulesFor(user user.Info, namespace string) ([]authorizer.ResourceRuleInfo, []authorizer.NonResourceRuleInfo, bool, error) {
+	return []authorizer.ResourceRuleInfo{
+			&authorizer.DefaultResourceRuleInfo{
+				Verbs:     []string{"*"},
+				APIGroups: []string{"*"},
+				Resources: []string{"*"},
+			},
+		}, []authorizer.NonResourceRuleInfo{
+			&authorizer.DefaultNonResourceRuleInfo{
+				Verbs:           []string{"*"},
+				NonResourceURLs: []string{"*"},
+			},
+		}, false, nil
+}
+
+func NewAlwaysAllowAuthorizer() *localAuthorizer {
+	return new(localAuthorizer)
 }

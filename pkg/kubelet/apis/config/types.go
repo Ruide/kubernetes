@@ -504,6 +504,8 @@ const (
 	KubeletAuthorizationModeAlwaysAllow KubeletAuthorizationMode = "AlwaysAllow"
 	// KubeletAuthorizationModeWebhook uses the SubjectAccessReview API to determine authorization
 	KubeletAuthorizationModeWebhook KubeletAuthorizationMode = "Webhook"
+	// KubeletAuthorizationModeLocal uses the SubjectAccessReview API to determine authorization
+	KubeletAuthorizationModeLocal KubeletAuthorizationMode = "Local"
 )
 
 // KubeletAuthorization holds the state related to the authorization in the kublet.
