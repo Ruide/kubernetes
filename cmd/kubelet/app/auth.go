@@ -169,8 +169,7 @@ type kubeletWebhookMetrics struct {
 func (localAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorized authorizer.Decision, reason string, err error) {
 	// Create a REST client instance to Open Policy Agent server.
 	clientConfig := rest.Config{
-		Host:    "http://localhost:8181",
-		APIPath: "v1/data",
+		Host: "http://localhost:8181",
 	}
 
 	var decisionOnError authorizer.Decision
@@ -196,7 +195,7 @@ func (localAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (
 		kubeletWebhookMetrics{WebhookMetrics: webhookmetrics.NewWebhookMetrics(), MatcherMetrics: cel.NewMatcherMetrics()},
 	)
 	if err != nil {
-		return 0, "Failed to create local webhook authorizer: %v", err
+		return decisionOnError, "Failed to create local webhook authorizer: %v", err
 	}
 	return webhookAuthorizer.Authorize(ctx, a)
 }
